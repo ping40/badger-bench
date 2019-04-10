@@ -4,12 +4,14 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"github.com/syndtr/goleveldb/leveldb/opt"
 	"math/rand"
 	"net/http"
 	"os"
 	"runtime"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/boltdb/bolt"
 	"github.com/dgraph-io/badger"
@@ -45,7 +47,10 @@ func getRocks() *store.Store {
 }
 
 func getLevelDB() *leveldb.DB {
-	ldb, err := leveldb.OpenFile(*flagDir+"/level/l.db", nil)
+	o := &opt.Options{
+		CompactionTableSize:64*1024*1024,
+	}
+	ldb, err := leveldb.OpenFile(*flagDir+"/level/l.db", o)
 	y.Check(err)
 	return ldb
 }
@@ -66,9 +71,9 @@ func newKey() []byte {
 
 func print(count int) {
 	if count%100000 == 0 {
-		fmt.Printf(".")
+		fmt.Printf(".k.")
 	} else if count%Mi == 0 {
-		fmt.Printf("-")
+		fmt.Printf("-k-")
 	}
 }
 
@@ -315,6 +320,82 @@ func BenchmarkIterateBadgerOnlyKeys(b *testing.B) {
 			b.Logf("[%d] Counted %d keys\n", j, count)
 		}
 	})
+}
+
+func BenchmarkIterateLevelOnlyKeys(b *testing.B) {
+	ldb := getLevelDB()
+	defer ldb.Close()
+
+	k := make([]byte, 1024)
+	b.ResetTimer()
+
+	b.Run("golevel-iterate-onlykeys", func(b *testing.B) {
+		kk :=0
+		for j := 0; j < b.N; j++ {
+
+			var count int
+			iter := ldb.NewIterator(nil, nil)
+			for iter.Next() {
+				k = safecopy(k, iter.Key())
+				count++
+				print(count)
+				if count >= 2*Mi {
+					break
+				}
+			}
+
+			iter.Release()
+			err := iter.Error()
+			if err != nil{
+				b.Logf("error : %v",err)
+			}
+
+			kk++
+			b.Logf("[%d] Counted %d keys, b.N: %v , time: %v, kk: %v\n", j, count, b.N, time.Now(),kk)
+		}
+	})
+}
+
+
+func BenchmarkIterateLevelWithValues(b *testing.B) {
+	ldb := getLevelDB()
+	defer ldb.Close()
+
+	k := make([]byte, 1024)
+	v := make([]byte, Mi)
+	b.ResetTimer()
+
+	b.Run("golevel-iterate-withvals", func(b *testing.B) {
+		kk :=0
+		for j := 0; j < b.N; j++ {
+
+			var count int
+			iter := ldb.NewIterator(nil, nil)
+			for iter.Next() {
+				k = safecopy(k, iter.Key())
+				value:=iter.Value()
+				if value!=nil{
+//					v = safecopy(v,value)
+				}
+				count++
+				print(count)
+				if count >= 2*Mi {
+					break
+				}
+			}
+
+			iter.Release()
+			err := iter.Error()
+			if err != nil{
+				b.Logf("error : %v",err)
+			}
+
+			kk++
+			b.Logf("[%d] Counted %d keys, b.N: %v , time: %v, kk: %v\n", j, count, b.N, time.Now(),kk)
+		}
+	})
+
+	_ = v
 }
 
 func BenchmarkIterateBadgerWithValues(b *testing.B) {
